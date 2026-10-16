@@ -1,4 +1,4 @@
-// VANTSINC - FACEIT webhook backend.
+// VANTSINC - FACEIT webhook backend
 import { neon } from "@neondatabase/serverless";
 
 export default {
