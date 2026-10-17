@@ -17,6 +17,6 @@
     ]
   },
   "assets": {
-    "directory": "./Vants"
+    "directory": "./public"
   }
 }
