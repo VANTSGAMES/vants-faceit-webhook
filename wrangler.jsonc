@@ -17,6 +17,6 @@
     ]
   },
   "assets": {
-    "directory": "./assets"
+    "directory": ".//Vants"
   }
 }
