@@ -1,4 +1,6 @@
-"assets": {
-  "directory": "."
+{
+  "name": "vants-faceit-webhook",
+  "main": "src/index.js",
+  "compatibility_date": "2024-12-01",
+  "observability": { "enabled": true }
 }
-
