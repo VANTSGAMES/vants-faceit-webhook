@@ -14,6 +14,25 @@
 // workflow faceit-xp.yml) no cambia.
 // ------------------------------------------------------------
 import { neon } from "@neondatabase/serverless";
+import { createFaceitBridge } from "./vants-bus-faceit.js";
+
+// Puente FACEIT → VANTS-BUS (publicación de eventos del contrato VANTS).
+// Solo se activa si el Worker tiene VANTS_BUS_URL y VANTS_BUS_SECRET.
+// Nunca altera la respuesta a FACEIT: publica en background con waitUntil.
+let _bridge = null;
+function bridgeFor(env) {
+  if (!_bridge) {
+    _bridge = createFaceitBridge({
+      busUrl: env.VANTS_BUS_URL,
+      secret: env.VANTS_BUS_SECRET,
+      DATABASE_URL: env.DATABASE_URL,
+    });
+  }
+  return _bridge;
+}
+function busConfigurado(env) {
+  return Boolean(env.VANTS_BUS_URL && env.VANTS_BUS_SECRET && env.DATABASE_URL);
+}
 
 // Nombres de header aceptados (headers.get ya es case-insensitive)
 const HEADER_ALIASES = [
@@ -42,11 +61,19 @@ const json = (body, status) =>
   });
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === "/healthz" && request.method === "GET") {
-      return json({ ok: true, service: "vants-faceit-webhook", version: 2 }, 200);
+      return json(
+        {
+          ok: true,
+          service: "vants-faceit-webhook",
+          version: 3,
+          bus: { configurado: busConfigurado(env) },
+        },
+        200,
+      );
     }
 
     if (url.pathname !== "/api/webhooks/faceit") {
@@ -110,6 +137,19 @@ export default {
           ${JSON.stringify(payload)}::jsonb
         )
       `;
+
+      // Publicar al bus DESPUÉS de guardar (contrato intacto: si el bus
+      // falla, FACEIT ya recibió 200 y el pipeline de XP no cambia).
+      if (busConfigurado(env) && ctx) {
+        ctx.waitUntil(
+          bridgeFor(env)
+            .handle(payload)
+            .then((r) => {
+              if (!r?.ok) console.warn("vants-bus: publicación diferida", JSON.stringify(r));
+            })
+            .catch((e) => console.error("vants-bus bridge:", e?.message)),
+        );
+      }
 
       return json({ ok: true, stored: true }, 200);
     } catch (error) {
