@@ -13,7 +13,7 @@
 // (event_type, payload) — el procesador de XP (migraciones 08/10 y
 // workflow faceit-xp.yml) no cambia.
 // ------------------------------------------------------------
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
 import { createFaceitBridge } from "./vants-bus-faceit.js";
 
 // Puente FACEIT → VANTS-BUS (publicación de eventos del contrato VANTS).
@@ -120,16 +120,20 @@ export default {
       return json({ ok: false, error: "invalid_json" }, 400);
     }
 
+    // postgres.js (TCP estándar): el valor de DATABASE_URL decide la base
+    // (pooler de Neon durante el paralelo, pooler de sesión de Supabase
+    // tras el corte). prepare: false para poolers; el cliente se cierra al
+    // final de la petición con waitUntil.
+    const sql = postgres(env.DATABASE_URL, { max: 3, prepare: false });
+
+    const eventType =
+      typeof payload?.event === "string"
+        ? payload.event
+        : typeof payload?.type === "string"
+          ? payload.type
+          : null;
+
     try {
-      const sql = neon(env.DATABASE_URL);
-
-      const eventType =
-        typeof payload?.event === "string"
-          ? payload.event
-          : typeof payload?.type === "string"
-            ? payload.type
-            : null;
-
       await sql`
         INSERT INTO faceit_webhook_events (event_type, payload)
         VALUES (
@@ -155,6 +159,12 @@ export default {
     } catch (error) {
       console.error("Failed to store FACEIT event");
       return json({ ok: false, error: "internal" }, 500);
+    } finally {
+      // postgres.js mantiene conexiones abiertas: liberarlas sin bloquear
+      // la respuesta (el cierre corre en background tras responder).
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(sql.end({ timeout: 1 }).catch(() => {}));
+      }
     }
   }
 };

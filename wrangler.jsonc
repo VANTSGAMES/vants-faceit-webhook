@@ -2,5 +2,8 @@
   "name": "vants-faceit-webhook",
   "main": "src/index.js",
   "compatibility_date": "2024-12-01",
+  // nodejs_compat: el driver postgres (postgres.js) abre TCP a la base de
+  // datos (pooler de Neon durante el paralelo, pooler de Supabase tras el corte).
+  "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true }
 }
