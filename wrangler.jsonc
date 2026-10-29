@@ -2,8 +2,15 @@
   "name": "vants-faceit-webhook",
   "main": "src/index.js",
   "compatibility_date": "2024-12-01",
-  // nodejs_compat: el driver postgres (postgres.js) abre TCP a la base de
-  // datos (pooler de Neon durante el paralelo, pooler de Supabase tras el corte).
+  // nodejs_compat: node:crypto para comparaciones timing-safe.
+  // Base de datos: D1 (vants-db) por binding DB — todo en Cloudflare.
   "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vants-db",
+      "database_id": "11e5d82c-307b-44ba-9682-501d8df593d3"
+    }
+  ]
 }

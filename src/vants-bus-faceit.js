@@ -1,8 +1,7 @@
 /* ============================================================
  * VANTS-BUS · Puente FACEIT → bus (drop-in para vants-faceit-webhook)
- * Migración Neon -> Supabase: la conexión a la base ya no usa el driver
- * HTTP de Neon sino postgres (postgres.js) por TCP, que funciona igual
- * con el pooler de Neon (paralelo) y el de Supabase (tras el corte).
+ * EDICIÓN D1 (todo en Cloudflare): la deduplicación vive en el binding D1
+ * `db` (vants-db), ya no en Postgres (Neon/Supabase).
  *
  * Convierte cada webhook de FACEIT en eventos del contrato VANTS,
  * con DEDUPLICACIÓN por event_id (FACEIT reintenta webhooks) y
@@ -12,17 +11,16 @@
  *
  * CÓMO CONECTARLO (2 pasos):
  *
- *   1) Copia a tu repo este archivo + vants-bus-client.js
+ *   1) Copia a tu repo este archivo + vants-bus-client.js + _d1.js
  *   2) En tu handler de webhook, DESPUÉS de validar la firma de
- *      FACEIT y guardar el payload en tu Neon:
+ *      FACEIT y guardar el payload en tu D1:
  *
  *        import { createFaceitBridge } from './vants-bus-faceit.js';
  *
  *        const bridge = createFaceitBridge({
  *          busUrl: env.VANTS_BUS_URL,          // o process.env en Node
  *          secret: env.VANTS_BUS_SECRET,
- *          sql: tuConexionNeonExistente,        // opcional: fn(query, params) → rows
- *          DATABASE_URL: env.DATABASE_URL,      // ...o deja que el módulo cree su conexión
+ *          db: env.DB,                          // binding D1 (vants-db)
  *        });
  *
  *        // Workers/Pages:  ctx.waitUntil(bridge.handle(faceitEvent))
@@ -32,14 +30,14 @@
  *   5xx a FACEIT para que reintente (el módulo ya libera el dedup).
  * ============================================================ */
 
-import postgres from 'postgres';
+import { crearSql } from './_d1.js';
 import { VantsBus, EVENTS } from './vants-bus-client.js';
 
-/* Tabla de deduplicación (se crea sola la primera vez). */
+/* Tabla de deduplicación (ya existe en vants-db; DDL idempotente por si acaso). */
 const DEDUP_DDL = `
   CREATE TABLE IF NOT EXISTS vants_bus_dedup (
     event_id TEXT PRIMARY KEY,
-    seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    seen_at  TEXT NOT NULL DEFAULT (datetime('now'))
   )`;
 
 /* ---------- mapeo FACEIT → contrato VANTS ---------- */
@@ -106,8 +104,8 @@ export function createFaceitBridge({
   busUrl,
   secret,
   projectId = 'faceit-webhook',
-  sql = null,           // tu conexión Neon ya existente: fn(query, params) → rows
-  DATABASE_URL = null,  // ...o la cadena para que este módulo cree la suya
+  sql = null,           // tu conexión ya existente (interfaz crearSql)
+  db = null,            // ...o el binding D1 para que este módulo cree la suya
   maxRetries = 3,
   logger = console,
 }) {
@@ -121,38 +119,34 @@ export function createFaceitBridge({
 
   function getSql() {
     if (_sql) return _sql;
-    if (!DATABASE_URL) {
-      throw new Error('createFaceitBridge: pasa `sql` (tu conexión) o `DATABASE_URL`');
+    if (!db) {
+      throw new Error('createFaceitBridge: pasa `sql` (tu conexión crearSql) o `db` (binding D1)');
     }
-    // postgres.js (TCP estándar): funciona con el pooler de Neon durante el
-    // paralelo y con el pooler de sesión de Supabase tras el corte.
-    // prepare: false evita sentencias preparadas sobre poolers.
-    const cliente = postgres(DATABASE_URL, { max: 3, prepare: false });
-    _sql = (query, params) => cliente.unsafe(query, params);
+    _sql = crearSql(db);
     return _sql;
   }
 
   /* Compatibilidad: ya no hace falta llamarla (getSql crea la conexión si
-   * hay DATABASE_URL), pero se conserva para quien la invocara antes. */
+   * hay binding D1), pero se conserva para quien la invocara antes. */
   async function initNeon() {
     getSql();
   }
 
   async function ensureTable() {
     if (_tableReady) return;
-    await getSql()(DEDUP_DDL, []);
+    await getSql().query(DEDUP_DDL, []);
     _tableReady = true;
   }
 
   /* Claim atómico: true si somos los primeros en ver este event_id. */
   async function claim(eventId) {
-    const res = await getSql()(
+    const res = await getSql().query(
       `INSERT INTO vants_bus_dedup (event_id) VALUES ($1)
        ON CONFLICT (event_id) DO NOTHING
        RETURNING event_id`,
       [eventId]
     );
-    const rows = Array.isArray(res) ? res : (res && res.rows) || [];
+    const rows = (res && res.rows) || [];
     return rows.length > 0;
   }
 
@@ -160,7 +154,7 @@ export function createFaceitBridge({
    * para que el reintento de FACEIT (o manual) pueda reclamarlo otra vez. */
   async function releaseClaim(eventId) {
     try {
-      await getSql()(`DELETE FROM vants_bus_dedup WHERE event_id = $1`, [eventId]);
+      await getSql().query(`DELETE FROM vants_bus_dedup WHERE event_id = $1`, [eventId]);
     } catch (e) {
       logger.warn?.('[vants-faceit] no pude liberar el dedup:', e?.message || e);
     }

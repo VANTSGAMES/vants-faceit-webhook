@@ -1,4 +1,3 @@
-
 {
   "name": "vants-faceit-webhook",
   "private": true,
@@ -6,10 +5,9 @@
   "scripts": {
     "deploy": "wrangler deploy"
   },
-  "dependencies": {
-    "postgres": "^3.4.7"
-  },
+  "dependencies": {},
   "devDependencies": {
     "wrangler": "^4.0.0"
-  }
+  },
+  "description": "FACEIT webhook backend v2 \u00b7 base D1 (todo en Cloudflare)"
 }

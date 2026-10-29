@@ -13,11 +13,12 @@
 // (event_type, payload) — el procesador de XP (migraciones 08/10 y
 // workflow faceit-xp.yml) no cambia.
 // ------------------------------------------------------------
-import postgres from "postgres";
 import { createFaceitBridge } from "./vants-bus-faceit.js";
+import { crearSql } from "./_d1.js";
 
 // Puente FACEIT → VANTS-BUS (publicación de eventos del contrato VANTS).
-// Solo se activa si el Worker tiene VANTS_BUS_URL y VANTS_BUS_SECRET.
+// Solo se activa si el Worker tiene VANTS_BUS_URL y VANTS_BUS_SECRET (la base
+// es el binding D1 `DB`, el mismo esquema de vants-db).
 // Nunca altera la respuesta a FACEIT: publica en background con waitUntil.
 let _bridge = null;
 function bridgeFor(env) {
@@ -25,13 +26,13 @@ function bridgeFor(env) {
     _bridge = createFaceitBridge({
       busUrl: env.VANTS_BUS_URL,
       secret: env.VANTS_BUS_SECRET,
-      DATABASE_URL: env.DATABASE_URL,
+      db: env.DB,
     });
   }
   return _bridge;
 }
 function busConfigurado(env) {
-  return Boolean(env.VANTS_BUS_URL && env.VANTS_BUS_SECRET && env.DATABASE_URL);
+  return Boolean(env.VANTS_BUS_URL && env.VANTS_BUS_SECRET && env.DB);
 }
 
 // Nombres de header aceptados (headers.get ya es case-insensitive)
@@ -120,11 +121,9 @@ export default {
       return json({ ok: false, error: "invalid_json" }, 400);
     }
 
-    // postgres.js (TCP estándar): el valor de DATABASE_URL decide la base
-    // (pooler de Neon durante el paralelo, pooler de sesión de Supabase
-    // tras el corte). prepare: false para poolers; el cliente se cierra al
-    // final de la petición con waitUntil.
-    const sql = postgres(env.DATABASE_URL, { max: 3, prepare: false });
+    // D1 (todo en Cloudflare): el binding `DB` apunta a vants-db, donde vive
+    // la tabla faceit_webhook_events que consume el procesador de XP.
+    const sql = crearSql(env.DB);
 
     const eventType =
       typeof payload?.event === "string"
@@ -134,13 +133,11 @@ export default {
           : null;
 
     try {
-      await sql`
-        INSERT INTO faceit_webhook_events (event_type, payload)
-        VALUES (
-          ${eventType},
-          ${JSON.stringify(payload)}::jsonb
-        )
-      `;
+      await sql.query(
+        `INSERT INTO faceit_webhook_events (event_type, payload)
+         VALUES ($1, $2)`,
+        [eventType, JSON.stringify(payload)]
+      );
 
       // Publicar al bus DESPUÉS de guardar (contrato intacto: si el bus
       // falla, FACEIT ya recibió 200 y el pipeline de XP no cambia).
@@ -159,12 +156,6 @@ export default {
     } catch (error) {
       console.error("Failed to store FACEIT event");
       return json({ ok: false, error: "internal" }, 500);
-    } finally {
-      // postgres.js mantiene conexiones abiertas: liberarlas sin bloquear
-      // la respuesta (el cierre corre en background tras responder).
-      if (ctx && typeof ctx.waitUntil === "function") {
-        ctx.waitUntil(sql.end({ timeout: 1 }).catch(() => {}));
-      }
     }
   }
 };
