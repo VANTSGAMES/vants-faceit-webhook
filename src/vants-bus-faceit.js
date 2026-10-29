@@ -1,5 +1,8 @@
 /* ============================================================
  * VANTS-BUS · Puente FACEIT → bus (drop-in para vants-faceit-webhook)
+ * Migración Neon -> Supabase: la conexión a la base ya no usa el driver
+ * HTTP de Neon sino postgres (postgres.js) por TCP, que funciona igual
+ * con el pooler de Neon (paralelo) y el de Supabase (tras el corte).
  *
  * Convierte cada webhook de FACEIT en eventos del contrato VANTS,
  * con DEDUPLICACIÓN por event_id (FACEIT reintenta webhooks) y
@@ -29,6 +32,7 @@
  *   5xx a FACEIT para que reintente (el módulo ya libera el dedup).
  * ============================================================ */
 
+import postgres from 'postgres';
 import { VantsBus, EVENTS } from './vants-bus-client.js';
 
 /* Tabla de deduplicación (se crea sola la primera vez). */
@@ -118,17 +122,20 @@ export function createFaceitBridge({
   function getSql() {
     if (_sql) return _sql;
     if (!DATABASE_URL) {
-      throw new Error('createFaceitBridge: pasa `sql` (tu conexión Neon) o `DATABASE_URL`');
+      throw new Error('createFaceitBridge: pasa `sql` (tu conexión) o `DATABASE_URL`');
     }
-    throw new Error('createFaceitBridge: usa initNeon() (async) o pasa tu `sql` ya creada');
+    // postgres.js (TCP estándar): funciona con el pooler de Neon durante el
+    // paralelo y con el pooler de sesión de Supabase tras el corte.
+    // prepare: false evita sentencias preparadas sobre poolers.
+    const cliente = postgres(DATABASE_URL, { max: 3, prepare: false });
+    _sql = (query, params) => cliente.unsafe(query, params);
+    return _sql;
   }
 
-  /* Para quien no pase `sql`: llama una vez al arrancar. */
+  /* Compatibilidad: ya no hace falta llamarla (getSql crea la conexión si
+   * hay DATABASE_URL), pero se conserva para quien la invocara antes. */
   async function initNeon() {
-    if (_sql) return;
-    const mod = await import('@neondatabase/serverless');
-    const neon = mod.neon(DATABASE_URL);
-    _sql = (query, params) => neon.query(query, params);
+    getSql();
   }
 
   async function ensureTable() {
