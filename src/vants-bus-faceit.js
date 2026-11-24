@@ -108,11 +108,12 @@ export function createFaceitBridge({
   db = null,            // ...o el binding D1 para que este módulo cree la suya
   maxRetries = 3,
   logger = console,
+  fetchImpl,
 }) {
   if (!busUrl)  throw new Error('createFaceitBridge: falta busUrl');
   if (!secret)  throw new Error('createFaceitBridge: falta secret');
 
-  const bus = new VantsBus({ busUrl, projectId, secret });
+  const bus = new VantsBus({ busUrl, projectId, secret, fetchImpl });
 
   let _sql = sql;
   let _tableReady = false;

@@ -5,13 +5,13 @@ const CHECKS = [
   {
     "id": "webhook",
     "label": "FACEIT webhook (vivo)",
-    "url": "https://vants-faceit-webhook.vants.workers.dev/",
+    "url": "https://vants.cc/api/webhooks/faceit",
     "expect": "any"
   },
   {
     "id": "web",
     "label": "Web VANTS",
-    "url": "https://vants.vants.workers.dev/",
+    "url": "https://vants.cc/",
     "markers": [
       "VANTS GAMES"
     ]
@@ -27,7 +27,7 @@ async function httpCheck(c) {
     const r = await fetch(c.url, {
       signal: ctl.signal,
       redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VANTS-Monitor/1.0; +https://vants.vants.workers.dev)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VANTS-Monitor/1.0; +https://vants.cc)' },
     });
     clearTimeout(t);
     const ms = Date.now() - t0;

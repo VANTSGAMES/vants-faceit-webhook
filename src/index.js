@@ -13,26 +13,33 @@
 // (event_type, payload) — el procesador de XP (migraciones 08/10 y
 // workflow faceit-xp.yml) no cambia.
 // ------------------------------------------------------------
+import { timingSafeEqual } from "node:crypto";
 import { createFaceitBridge } from "./vants-bus-faceit.js";
 import { crearSql } from "./_d1.js";
 
-// Puente FACEIT → VANTS-BUS (publicación de eventos del contrato VANTS).
-// Solo se activa si el Worker tiene VANTS_BUS_URL y VANTS_BUS_SECRET (la base
-// es el binding D1 `DB`, el mismo esquema de vants-db).
-// Nunca altera la respuesta a FACEIT: publica en background con waitUntil.
-let _bridge = null;
-function bridgeFor(env) {
-  if (!_bridge) {
-    _bridge = createFaceitBridge({
-      busUrl: env.VANTS_BUS_URL,
-      secret: env.VANTS_BUS_SECRET,
-      db: env.DB,
-    });
+function safeEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+  } catch {
+    return false;
   }
-  return _bridge;
+}
+
+// Puente FACEIT → VANTS-BUS (publicación de eventos del contrato VANTS).
+// Usa Service Binding VANTS_BUS_SERVICE si existe (evita error 1042) o VANTS_BUS_URL.
+// Nunca altera la respuesta a FACEIT: publica en background con waitUntil.
+function bridgeFor(env) {
+  const binding = env.VANTS_BUS_SERVICE;
+  return createFaceitBridge({
+    busUrl: env.VANTS_BUS_URL || "https://bus.vants.cc",
+    secret: env.VANTS_BUS_SECRET,
+    db: env.DB,
+    fetchImpl: binding ? (u, init) => binding.fetch(new Request(u, init)) : undefined,
+  });
 }
 function busConfigurado(env) {
-  return Boolean(env.VANTS_BUS_URL && env.VANTS_BUS_SECRET && env.DB);
+  return Boolean((env.VANTS_BUS_SERVICE || env.VANTS_BUS_URL) && env.VANTS_BUS_SECRET && env.DB);
 }
 
 // Nombres de header aceptados (headers.get ya es case-insensitive)
@@ -99,11 +106,11 @@ export default {
     if (expected) {
       for (const name of HEADER_ALIASES) {
         const v = request.headers.get(name);
-        if (v && v === expected) { authed = true; break; }
+        if (safeEqual(v, expected)) { authed = true; break; }
       }
       if (!authed) {
         for (const [k, val] of url.searchParams) {
-          if (QUERY_ALIASES.includes(k.toLowerCase()) && val === expected) {
+          if (QUERY_ALIASES.includes(k.toLowerCase()) && safeEqual(val, expected)) {
             authed = true;
             break;
           }
