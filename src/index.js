@@ -30,12 +30,11 @@ function safeEqual(a, b) {
 // Usa Service Binding VANTS_BUS_SERVICE si existe (evita error 1042) o VANTS_BUS_URL.
 // Nunca altera la respuesta a FACEIT: publica en background con waitUntil.
 function bridgeFor(env) {
-  const binding = env.VANTS_BUS_SERVICE;
   return createFaceitBridge({
     busUrl: env.VANTS_BUS_URL || "https://bus.vants.cc",
+    busService: env.VANTS_BUS_SERVICE,
     secret: env.VANTS_BUS_SECRET,
     db: env.DB,
-    fetchImpl: binding ? (u, init) => binding.fetch(new Request(u, init)) : undefined,
   });
 }
 function busConfigurado(env) {

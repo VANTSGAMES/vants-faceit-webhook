@@ -52,43 +52,37 @@ export function mapFaceitToVants(faceitEvent) {
   const out = [];
   const ev = String(faceitEvent?.event || '');
   const p = faceitEvent?.payload || {};
+  const matchId = p.match_id || p.id || null;
+  const game = normalizeGame(p.game);
 
   switch (ev) {
     case 'match_status_finished': {
+      const teamA = Array.isArray(p.teams) ? p.teams[0]?.name : p?.teams?.faction1?.name;
+      const teamB = Array.isArray(p.teams) ? p.teams[1]?.name : p?.teams?.faction2?.name;
+      const scores = p?.results?.score || {};
+      const vals = Object.values(scores);
       out.push({
         type: EVENTS.MATCH_FINISHED,
         data: {
-          matchId: p.match_id,
-          game: normalizeGame(p.game),
-          a: p?.teams?.faction1?.name,
-          b: p?.teams?.faction2?.name,
-          sa: p?.results?.score?.faction1,
-          sb: p?.results?.score?.faction2,
+          matchId,
+          game,
+          a: teamA || null,
+          b: teamB || null,
+          sa: scores.faction1 ?? vals[0] ?? null,
+          sb: scores.faction2 ?? vals[1] ?? null,
           finishedAt: p.finished_at || new Date().toISOString(),
         },
       });
       break;
     }
     case 'match_object_created': {
-      out.push({
-        type: EVENTS.MATCH_SCHEDULED,
-        data: {
-          matchId: p.match_id,
-          game: normalizeGame(p.game),
-          startsAt: p.started_at || null,
-        },
-      });
+      out.push({ type: EVENTS.MATCH_SCHEDULED, data: { matchId, game, startsAt: p.started_at || null } });
       break;
     }
-    case 'match_status_canceled': {
-      out.push({
-        type: EVENTS.MATCH_CANCELED,
-        data: {
-          matchId: p.match_id,
-          game: normalizeGame(p.game),
-          canceledAt: new Date().toISOString(),
-        },
-      });
+    case 'match_status_canceled':
+    case 'match_status_cancelled':
+    case 'match_status_aborted': {
+      out.push({ type: EVENTS.MATCH_CANCELED, data: { matchId, game, canceledAt: new Date().toISOString() } });
       break;
     }
     default:
@@ -102,6 +96,7 @@ export function mapFaceitToVants(faceitEvent) {
 
 export function createFaceitBridge({
   busUrl,
+  busService = null,
   secret,
   projectId = 'faceit-webhook',
   sql = null,           // tu conexión ya existente (interfaz crearSql)
@@ -110,10 +105,11 @@ export function createFaceitBridge({
   logger = console,
   fetchImpl,
 }) {
-  if (!busUrl)  throw new Error('createFaceitBridge: falta busUrl');
-  if (!secret)  throw new Error('createFaceitBridge: falta secret');
+  if (!busUrl && !busService) throw new Error('createFaceitBridge: falta busUrl o busService');
+  if (!secret) throw new Error('createFaceitBridge: falta secret');
 
-  const bus = new VantsBus({ busUrl, projectId, secret, fetchImpl });
+  const resolvedFetchImpl = fetchImpl ?? (busService ? (u, init) => busService.fetch(new Request(u, init)) : undefined);
+  const bus = new VantsBus({ busUrl: busUrl || 'https://vants-bus', projectId, secret, fetchImpl: resolvedFetchImpl });
 
   let _sql = sql;
   let _tableReady = false;
